@@ -234,6 +234,9 @@ export const poseOptions = [
   "Slow Walking"
 ];
 
+export const aspectRatioOptions = ["9:16", "16:9", "1:1", "4:3", "3:4"];
+
+
 // A type for the state
 export interface CreativeDirectionState {
   vibe: string;
@@ -246,6 +249,7 @@ export interface CreativeDirectionState {
   effect: string;
   pose: string;
   creativityLevel: number;
+  aspectRatio: string;
 }
 
 // A function to get the initial state
@@ -260,4 +264,5 @@ export const getInitialCreativeDirectionState = (): CreativeDirectionState => ({
   effect: 'None',
   pose: 'Random',
   creativityLevel: 5,
+  aspectRatio: '9:16',
 });

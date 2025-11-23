@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { UsersIcon, AlertTriangleIcon, DownloadIcon, XIcon, ImageIcon, RefreshCwIcon, VideoIcon, PlayIcon, KeyIcon, CheckCircleIcon } from '../Icons';
+import { UsersIcon, AlertTriangleIcon, DownloadIcon, XIcon, ImageIcon, RefreshCwIcon, VideoIcon, PlayIcon, KeyIcon, CheckCircleIcon, ChevronLeftIcon, ChevronRightIcon } from '../Icons';
 import Spinner from '../common/Spinner';
 import ImageUpload from '../common/ImageUpload';
 import { type User, type Language } from '../../types';
@@ -44,6 +44,14 @@ interface UgcGeneratorViewProps {
 const PRESET_PROMPTS = {
     'English': "A cinematic shot of a futuristic city with flying cars at sunset, cyberpunk aesthetic, highly detailed, 8k resolution.",
     'Bahasa Malaysia': "Paparan sinematik bandar futuristik dengan kereta terbang pada waktu matahari terbenam, estetik cyberpunk, sangat terperinci, resolusi 8k."
+};
+
+const aspectRatioMap: { [key: string]: string } = {
+  '9:16': 'IMAGE_ASPECT_RATIO_PORTRAIT',
+  '16:9': 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  '1:1': 'IMAGE_ASPECT_RATIO_SQUARE',
+  '4:3': 'IMAGE_ASPECT_RATIO_FOUR_THREE',
+  '3:4': 'IMAGE_ASPECT_RATIO_THREE_FOUR',
 };
 
 // Helper to safely parse JSON
@@ -181,7 +189,7 @@ const TokenHealthTester: React.FC<TokenHealthTesterProps> = ({ currentUser, onUs
                             onChange={handleTokenChange}
                             className="flex-1 p-2 text-xs font-mono bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded focus:ring-1 focus:ring-primary-500 outline-none"
                         >
-                            <option value="random">-- Random Token (Default) --</option>
+                            <option value="random">-- Random Token --</option>
                             {tokenPool.map(({ token, createdAt }) => (
                                 <option key={token} value={token}>
                                     ...{token.slice(-10)} ({new Date(createdAt).toLocaleTimeString()})
@@ -251,6 +259,7 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
     
     const [creativeState, setCreativeState] = useState<CreativeDirectionState>(getInitialCreativeDirectionState());
     const isProcessingRef = useRef(false);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
 
     const [serverStats, setServerStats] = useState<Record<string, ServerStats>>(
         SERVERS.reduce((acc, server) => ({ ...acc, [server.id]: { success: 0, failed: 0 } }), {})
@@ -260,9 +269,11 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
         SERVERS.reduce((acc, server) => ({ ...acc, [server.id]: { status: 'idle', logs: [] } }), {})
     );
     
-    // State moved up from TokenHealthTester
     const [tokenPool, setTokenPool] = useState<{ token: string; createdAt: string }[]>([]);
-    const [selectedToken, setSelectedToken] = useState('random'); // Default to random
+    const [selectedToken, setSelectedToken] = useState('random');
+    
+    const [viewState, setViewState] = useState<'idle' | 'processing' | 'results'>('idle');
+    const [processingProgress, setProcessingProgress] = useState({ completed: 0, total: 0 });
 
     useEffect(() => {
         const tokensJSON = sessionStorage.getItem('veoAuthTokens');
@@ -275,7 +286,6 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
             } catch (e) { console.error("Could not parse token pool", e); }
         }
     }, [currentUser.personalAuthToken]);
-
 
     const updateServerState = (serverId: string, updates: Partial<ServerState>) => {
         setServerStates(prev => ({
@@ -301,20 +311,6 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
                 ...prev[serverId], 
                 logs: [...(prev[serverId].logs || []), `[${new Date().toLocaleTimeString()}] ${message}`] 
             }
-        }));
-    };
-
-     const handleResetServer = (serverId: string) => {
-        setServerStates(prev => ({
-            ...prev,
-            [serverId]: { status: 'idle', logs: [], resultUrl: undefined, resultType: undefined, error: undefined, duration: undefined }
-        }));
-    };
-  
-    const handleCreateNewServer = (serverId: string) => {
-         setServerStates(prev => ({
-            ...prev,
-            [serverId]: { ...prev[serverId], status: 'idle', resultUrl: undefined, resultType: undefined, error: undefined }
         }));
     };
 
@@ -347,7 +343,10 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
     };
 
     const runTestForServer = async (server: typeof SERVERS[0], type: TestType) => {
-        updateServerState(server.id, { status: 'running', logs: [], error: undefined, duration: undefined });
+        setServerStates(prev => ({
+            ...prev,
+            [server.id]: { status: 'running', logs: [], error: undefined, duration: undefined }
+        }));
         appendLog(server.id, `Starting ${type} test on ${server.url}...`);
         
         const startTime = Date.now();
@@ -381,13 +380,17 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
         const fullPrompt = constructFullPrompt();
 
         try {
+            const payload = {
+                prompt: fullPrompt,
+                seed: randomSeed,
+                imageModelSettings: { 
+                    imageModel: type === 'T2I' ? 'IMAGEN_3_5' : 'R2I', 
+                    aspectRatio: aspectRatioMap[creativeState.aspectRatio] || 'IMAGE_ASPECT_RATIO_PORTRAIT' 
+                }
+            };
+            
             if (type === 'T2I') {
                 appendLog(server.id, 'Sending generate request (Imagen)...');
-                const payload = {
-                    prompt: fullPrompt,
-                    seed: randomSeed,
-                    imageModelSettings: { imageModel: 'IMAGEN_3_5', aspectRatio: 'IMAGE_ASPECT_RATIO_PORTRAIT' }
-                };
                 const res = await fetch(`${server.url}/api/imagen/generate`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
@@ -404,7 +407,7 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
             } else if (type === 'I2I') {
                 const validImages = referenceImages.filter((img): img is { base64: string, mimeType: string } => img !== null);
                 if (validImages.length === 0) throw new Error('No reference image provided');
-                updateServerState(server.id, { status: 'uploading' });
+                updateServerState(server.id, { status: 'uploading' }); 
                 const mediaIds: string[] = [];
                 for (let i = 0; i < validImages.length; i++) {
                     const img = validImages[i];
@@ -419,14 +422,14 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
                     const mediaId = uploadData.result?.data?.json?.result?.uploadMediaGenerationId || uploadData.mediaGenerationId?.mediaGenerationId || uploadData.mediaId;
                     mediaIds.push(mediaId);
                 }
-                updateServerState(server.id, { status: 'running' });
+                updateServerState(server.id, { status: 'running' }); 
                 const recipeRes = await fetch(`${server.url}/api/imagen/run-recipe`, {
                      method: 'POST',
                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
                      body: JSON.stringify({
                          userInstruction: fullPrompt,
                          seed: randomSeed,
-                         imageModelSettings: { imageModel: 'R2I', aspectRatio: 'IMAGE_ASPECT_RATIO_PORTRAIT' },
+                         imageModelSettings: payload.imageModelSettings,
                          recipeMediaInputs: mediaIds.map(id => ({ mediaInput: { mediaCategory: 'MEDIA_CATEGORY_SUBJECT', mediaGenerationId: id }, caption: 'reference' }))
                      })
                 });
@@ -444,6 +447,8 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
             updateServerState(server.id, { status: 'failed', error: e.message, duration });
             appendLog(server.id, `Error: ${e.message}`);
             incrementStats(server.id, false);
+        } finally {
+            setProcessingProgress(prev => ({ ...prev, completed: prev.completed + 1 }));
         }
     };
 
@@ -454,6 +459,16 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
         const serversToTest = targetServerId === 'all' 
             ? SERVERS 
             : SERVERS.filter(s => s.id === targetServerId);
+        
+        setViewState('processing');
+        setProcessingProgress({ completed: 0, total: serversToTest.length });
+
+        serversToTest.forEach(server => {
+            setServerStates(prev => ({
+                ...prev,
+                [server.id]: { status: 'idle', logs: [] }
+            }));
+        });
         
         const promises = serversToTest.map((server, index) => 
             new Promise<void>(resolve => {
@@ -466,245 +481,169 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
 
         await Promise.all(promises);
 
+        setViewState('results');
         isProcessingRef.current = false;
+    };
+    
+    const handleStartNewGeneration = () => {
+        setViewState('idle');
+        setProcessingProgress({ completed: 0, total: 0 });
+        setServerStates(SERVERS.reduce((acc, server) => ({ ...acc, [server.id]: { status: 'idle', logs: [] } }), {}));
     };
 
     const hasRefImages = referenceImages.some(img => img !== null);
 
+    const handleScroll = (direction: 'left' | 'right') => {
+        if (scrollContainerRef.current) {
+            const scrollAmount = scrollContainerRef.current.offsetWidth * 0.8;
+            scrollContainerRef.current.scrollBy({
+                left: direction === 'left' ? -scrollAmount : scrollAmount,
+                behavior: 'smooth'
+            });
+        }
+    };
+    
+    const renderResultsArea = () => {
+        if (viewState === 'idle') {
+            return (
+                <div className="flex items-center justify-center h-full text-center text-neutral-500 dark:text-neutral-600 p-4">
+                    <div>
+                        <ImageIcon className="w-16 h-16 mx-auto" />
+                        <p className="mt-2 font-semibold">Ready to Generate</p>
+                        <p className="text-sm">Your generated images will appear here after processing.</p>
+                    </div>
+                </div>
+            );
+        }
+
+        if (viewState === 'processing') {
+            const progressPercentage = processingProgress.total > 0 ? (processingProgress.completed / processingProgress.total) * 100 : 0;
+            return (
+                <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-4">
+                    <Spinner />
+                    <h3 className="text-xl font-semibold">Processing your request...</h3>
+                    <div className="w-full max-w-md">
+                        <div className="flex justify-between mb-1 text-sm">
+                            <span className="text-neutral-600 dark:text-neutral-400">Progress</span>
+                            <span className="font-medium text-neutral-800 dark:text-neutral-200">{processingProgress.completed} / {processingProgress.total}</span>
+                        </div>
+                        <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-2.5">
+                            <div className="bg-primary-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${progressPercentage}%` }}></div>
+                        </div>
+                    </div>
+                    <p className="text-sm text-neutral-500">Please wait, this may take a few moments.</p>
+                </div>
+            );
+        }
+
+        if (viewState === 'results') {
+            const successfulServers = SERVERS.filter(server => serverStates[server.id]?.status === 'success' && serverStates[server.id]?.resultUrl);
+
+            return (
+                <div className="flex flex-col h-full">
+                    <div className="p-4 flex-shrink-0 flex justify-center">
+                        <button 
+                            onClick={handleStartNewGeneration}
+                            className="bg-primary-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-primary-700 transition-colors shadow-md"
+                        >
+                            Start New Generation
+                        </button>
+                    </div>
+                    <div className="flex-1 relative group flex items-center min-h-0">
+                        {successfulServers.length > 0 ? (
+                            <div className="w-full h-full flex items-center justify-center">
+                                {successfulServers.length > 1 && (
+                                    <>
+                                        <button onClick={() => handleScroll('left')} className="absolute left-2 top-1/2 -translate-y-1/2 z-10 p-2 bg-black/30 text-white rounded-full hover:bg-black/60 transition-all opacity-0 group-hover:opacity-100">
+                                            <ChevronLeftIcon className="w-6 h-6"/>
+                                        </button>
+                                        <button onClick={() => handleScroll('right')} className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-2 bg-black/30 text-white rounded-full hover:bg-black/60 transition-all opacity-0 group-hover:opacity-100">
+                                            <ChevronRightIcon className="w-6 h-6"/>
+                                        </button>
+                                    </>
+                                )}
+                                <div ref={scrollContainerRef} className="flex items-center gap-4 overflow-x-auto p-4 custom-scrollbar">
+                                    {successfulServers.map(server => {
+                                        const state = serverStates[server.id];
+                                        const stats = serverStats[server.id];
+                                        return (
+                                            <div key={server.id} className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden flex flex-col h-[85vh] w-72 flex-shrink-0">
+                                                <div className="p-3 border-b border-neutral-200 dark:border-neutral-800 flex justify-between items-center bg-neutral-50 dark:bg-neutral-800/50">
+                                                    <div>
+                                                        <h3 className="font-bold text-sm">{server.name}</h3>
+                                                        <p className="text-xs text-neutral-500 font-mono">{server.url}</p>
+                                                    </div>
+                                                    <StatusBadge status={state.status} />
+                                                </div>
+                                                <div className="flex border-b border-neutral-200 dark:border-neutral-800 text-[10px] divide-x divide-neutral-200 dark:divide-neutral-800">
+                                                    <div className="flex-1 bg-green-50 dark:bg-green-900/20 p-1 text-center text-green-700 dark:text-green-300 font-bold">✅ {stats.success}</div>
+                                                    <div className="flex-1 bg-red-50 dark:bg-red-900/20 p-1 text-center text-red-700 dark:text-red-300 font-bold">❌ {stats.failed}</div>
+                                                </div>
+                                                <div className="relative w-full aspect-[9/16] bg-neutral-100 dark:bg-neutral-950 flex items-center justify-center group border-b border-neutral-200 dark:border-neutral-800">
+                                                    <img src={`data:image/png;base64,${state.resultUrl}`} alt="Result" className="w-full h-full object-cover" />
+                                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3"><button onClick={() => setPreviewItem({ type: 'image', url: state.resultUrl! })} className="p-2 bg-white text-black rounded-full hover:bg-neutral-200" title="Expand"><ImageIcon className="w-5 h-5" /></button><button onClick={() => handleImageUpdate(0, { base64: state.resultUrl!, mimeType: 'image/png' })} className="p-2 bg-white text-black rounded-full hover:bg-neutral-200" title="Use as Input"><RefreshCwIcon className="w-5 h-5" /></button><button onClick={() => downloadContent(state.resultUrl!, 'image', `server-${server.id}`)} className="p-2 bg-white text-black rounded-full hover:bg-neutral-200" title="Save"><DownloadIcon className="w-5 h-5" /></button></div>
+                                                </div>
+                                                <div className="flex items-center justify-between px-2 py-1.5 bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800">
+                                                    <span className="text-[10px] font-mono text-neutral-500">Time: {state.duration || '--'}</span>
+                                                </div>
+                                                <div className="h-24 bg-black text-green-400 p-2 font-mono text-[10px] overflow-y-auto">{state.logs.map((log, i) => (<div key={i}>{log}</div>))}</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="w-full text-center text-neutral-500">
+                                <AlertTriangleIcon className="w-12 h-12 mx-auto mb-4 text-yellow-500"/>
+                                <p className="font-semibold">No images were generated successfully.</p>
+                                <p className="text-sm">Please try adjusting your prompt or try again.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+    };
+
     return (
         <div className="h-full flex flex-col space-y-6">
              {previewItem && (
-                <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setPreviewItem(null)}>
-                    <button className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white" onClick={() => setPreviewItem(null)}>
-                        <XIcon className="w-6 h-6" />
-                    </button>
-                    <div className="max-w-5xl max-h-full flex flex-col items-center" onClick={e => e.stopPropagation()}>
-                        {previewItem.type === 'image' ? (
-                            <img src={`data:image/png;base64,${previewItem.url}`} alt="Preview" className="max-w-full max-h-[80vh] object-contain rounded-md" />
-                        ) : (
-                            <video src={previewItem.url} controls autoPlay className="max-w-full max-h-[80vh] rounded-md" />
-                        )}
-                        <div className="mt-4">
-                             <button 
-                                onClick={() => downloadContent(previewItem.url, previewItem.type, 'monoklix-test')}
-                                className="flex items-center gap-2 bg-white text-black font-bold py-2 px-6 rounded-full hover:bg-neutral-200 transition-colors"
-                            >
-                                <DownloadIcon className="w-5 h-5" /> Download Result
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setPreviewItem(null)}><button className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white" onClick={() => setPreviewItem(null)}><XIcon className="w-6 h-6" /></button><div className="max-w-5xl max-h-full flex flex-col items-center" onClick={e => e.stopPropagation()}>{previewItem.type === 'image' ? <img src={`data:image/png;base64,${previewItem.url}`} alt="Preview" className="max-w-full max-h-[80vh] object-contain rounded-md" /> : <video src={previewItem.url} controls autoPlay className="max-w-full max-h-[80vh] rounded-md" />}<div className="mt-4"><button onClick={() => downloadContent(previewItem.url, previewItem.type, 'monoklix-test')} className="flex items-center gap-2 bg-white text-black font-bold py-2 px-6 rounded-full hover:bg-neutral-200 transition-colors"><DownloadIcon className="w-5 h-5" /> Download Result</button></div></div></div>
             )}
 
             <div className="flex flex-col gap-2">
-                <h1 className="text-2xl font-bold flex items-center gap-2 text-neutral-900 dark:text-white">
-                    <UsersIcon className="w-8 h-8 text-primary-500" />
-                    UGC Generator
-                </h1>
-                <div className="flex justify-between items-end">
-                    <p className="text-neutral-500 dark:text-neutral-400">Generate multiple variations of your UGC content by testing against different servers.</p>
-                </div>
+                <h1 className="text-2xl font-bold flex items-center gap-2 text-neutral-900 dark:text-white"><UsersIcon className="w-8 h-8 text-primary-500" />UGC Generator</h1>
+                <div className="flex justify-between items-end"><p className="text-neutral-500 dark:text-neutral-400">Generate multiple variations of your UGC content by testing against different servers.</p></div>
             </div>
 
             <div className="bg-white dark:bg-neutral-900 p-6 rounded-xl shadow-sm border border-neutral-200 dark:border-neutral-800">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="lg:col-span-1 flex flex-col h-full">
                         <div>
-                            <label className="block text-sm font-medium mb-2">Reference Images (For I2I/I2V)</label>
+                            <label className="block text-sm font-medium mb-2">Reference Images (For I2I)</label>
                             <div className="grid grid-cols-2 gap-2">
-                                 <div className="flex flex-col h-full">
-                                    <ImageUpload 
-                                        id="master-upload-1" 
-                                        key={uploadKeys[0]}
-                                        onImageUpload={(base64, mimeType) => handleImageUpdate(0, { base64, mimeType })}
-                                        onRemove={() => handleImageUpdate(0, null)}
-                                        language={language}
-                                        title="Ref Image 1 (Primary)"
-                                    />
-                                 </div>
-                                 <div className="flex flex-col h-full">
-                                    <ImageUpload 
-                                        id="master-upload-2" 
-                                        key={uploadKeys[1]}
-                                        onImageUpload={(base64, mimeType) => handleImageUpdate(1, { base64, mimeType })}
-                                        onRemove={() => handleImageUpdate(1, null)}
-                                        language={language}
-                                        title="Ref Image 2"
-                                    />
-                                 </div>
+                                 <div className="flex flex-col h-full"><ImageUpload id="master-upload-1" key={uploadKeys[0]} onImageUpload={(base64, mimeType) => handleImageUpdate(0, { base64, mimeType })} onRemove={() => handleImageUpdate(0, null)} language={language} title="Ref Image 1 (Primary)" /></div>
+                                 <div className="flex flex-col h-full"><ImageUpload id="master-upload-2" key={uploadKeys[1]} onImageUpload={(base64, mimeType) => handleImageUpdate(1, { base64, mimeType })} onRemove={() => handleImageUpdate(1, null)} language={language} title="Ref Image 2" /></div>
                             </div>
                         </div>
-                        
                         <div className="mt-4 pt-4 border-t border-neutral-200 dark:border-neutral-800">
-                            <div className="flex justify-between items-center mb-2">
-                                <label className="block text-sm font-medium">Test Prompt</label>
-                                 <select 
-                                    value={promptLanguage} 
-                                    onChange={handleLanguageChange}
-                                    className="text-xs p-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded focus:ring-2 focus:ring-primary-500 outline-none"
-                                >
-                                    <option value="English">English</option>
-                                    <option value="Bahasa Malaysia">Bahasa Malaysia</option>
-                                </select>
-                            </div>
-                            <textarea 
-                                value={prompt} 
-                                onChange={e => setPrompt(e.target.value)} 
-                                rows={5}
-                                className="w-full p-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none resize-y text-sm"
-                                placeholder="Enter your test prompt here..."
-                            />
+                            <div className="flex justify-between items-center mb-2"><label className="block text-sm font-medium">Test Prompt</label><select value={promptLanguage} onChange={handleLanguageChange} className="text-xs p-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded focus:ring-2 focus:ring-primary-500 outline-none"><option value="English">English</option><option value="Bahasa Malaysia">Bahasa Malaysia</option></select></div>
+                            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} className="w-full p-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none resize-y text-sm" placeholder="Enter your test prompt here..."/>
                         </div>
-
-                         <div className="mt-4 pt-4 border-t border-neutral-200 dark:border-neutral-800">
-                            <CreativeDirectionPanel
-                                state={creativeState}
-                                setState={setCreativeState}
-                                language={language}
-                                showPose={true}
-                                showEffect={true}
-                            />
-                        </div>
+                         <div className="mt-4 pt-4 border-t border-neutral-200 dark:border-neutral-800"><CreativeDirectionPanel state={creativeState} setState={setCreativeState} language={language} showPose={true} showEffect={true} showAspectRatio={true} /></div>
                     </div>
-
                     <div className="lg:col-span-1 flex flex-col h-full">
                         <div className="space-y-4">
-                            <div>
-                                <label className="text-sm font-bold">Target Server:</label>
-                                <select 
-                                    value={targetServerId} 
-                                    onChange={(e) => setTargetServerId(e.target.value)}
-                                    className="w-full mt-1 p-2 bg-white dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 rounded-md focus:ring-2 focus:ring-primary-500 outline-none text-sm"
-                                >
-                                    <option value="all">All Servers (1-10) - Staggered Test</option>
-                                    {SERVERS.map(s => (
-                                        <option key={s.id} value={s.id}>{s.name} Only</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800">
-                                <TokenHealthTester 
-                                    currentUser={currentUser} 
-                                    onUserUpdate={onUserUpdate} 
-                                    tokenPool={tokenPool}
-                                    selectedToken={selectedToken}
-                                    setSelectedToken={setSelectedToken}
-                                />
-                            </div>
+                            <div><label className="text-sm font-bold">Target Server:</label><select value={targetServerId} onChange={(e) => setTargetServerId(e.target.value)} className="w-full mt-1 p-2 bg-white dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 rounded-md focus:ring-2 focus:ring-primary-500 outline-none text-sm"><option value="all">All Servers (1-10) - Staggered Test</option>{SERVERS.map(s => (<option key={s.id} value={s.id}>{s.name} Only</option>))}</select></div>
+                            <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800"><TokenHealthTester currentUser={currentUser} onUserUpdate={onUserUpdate} tokenPool={tokenPool} selectedToken={selectedToken} setSelectedToken={setSelectedToken} /></div>
                         </div>
-                        
-                        <div className="mt-auto space-y-2">
-                            <div className="flex gap-4">
-                                <button onClick={() => handleRunTests('T2I')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2">
-                                    <ImageIcon className="w-5 h-5" /> Create T2I
-                                </button>
-                                <button onClick={() => handleRunTests('I2I')} disabled={!hasRefImages} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-                                    <RefreshCwIcon className="w-5 h-5" /> Create I2I
-                                </button>
-                            </div>
-                        </div>
+                        <div className="mt-auto space-y-2"><div className="flex gap-4"><button onClick={() => handleRunTests('T2I')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2"><ImageIcon className="w-5 h-5" /> Create T2I</button><button onClick={() => handleRunTests('I2I')} disabled={!hasRefImages} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><RefreshCwIcon className="w-5 h-5" /> Create I2I</button></div></div>
                     </div>
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-1">
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                    {SERVERS.map(server => {
-                        const state = serverStates[server.id];
-                        const stats = serverStats[server.id];
-                        return (
-                            <div key={server.id} className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden flex flex-col h-auto">
-                                <div className="p-3 border-b border-neutral-200 dark:border-neutral-800 flex justify-between items-center bg-neutral-50 dark:bg-neutral-800/50">
-                                    <div>
-                                        <h3 className="font-bold text-sm">{server.name}</h3>
-                                        <p className="text-xs text-neutral-500 font-mono">{server.url}</p>
-                                    </div>
-                                    <StatusBadge status={state.status} />
-                                </div>
-                                
-                                <div className="flex border-b border-neutral-200 dark:border-neutral-800 text-[10px] divide-x divide-neutral-200 dark:divide-neutral-800">
-                                    <div className="flex-1 bg-green-50 dark:bg-green-900/20 p-1 text-center text-green-700 dark:text-green-300 font-bold">
-                                        ✅ {stats.success}
-                                    </div>
-                                    <div className="flex-1 bg-red-50 dark:bg-red-900/20 p-1 text-center text-red-700 dark:text-red-300 font-bold">
-                                        ❌ {stats.failed}
-                                    </div>
-                                </div>
-
-                                <div className="relative w-full aspect-[9/16] bg-neutral-100 dark:bg-neutral-950 flex items-center justify-center group border-b border-neutral-200 dark:border-neutral-800">
-                                    {state.status === 'running' || state.status === 'uploading' ? (
-                                        <div className="text-center">
-                                            <Spinner />
-                                            <p className="text-xs mt-2 text-neutral-500 animate-pulse">{state.status}...</p>
-                                        </div>
-                                    ) : state.resultUrl ? (
-                                        <>
-                                            {state.resultType === 'video' ? (
-                                                <video src={state.resultUrl} controls autoPlay muted loop className="w-full h-full object-cover" />
-                                            ) : (
-                                                <img src={`data:image/png;base64,${state.resultUrl}`} alt="Result" className="w-full h-full object-cover" />
-                                            )}
-                                            
-                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                                                <button 
-                                                    onClick={() => setPreviewItem({ type: state.resultType || 'image', url: state.resultUrl! })}
-                                                    className="p-2 bg-white text-black rounded-full hover:bg-neutral-200"
-                                                    title="Expand"
-                                                >
-                                                    <ImageIcon className="w-5 h-5" />
-                                                </button>
-                                                {state.resultType === 'image' && (
-                                                    <button
-                                                        onClick={() => handleImageUpdate(0, { base64: state.resultUrl!, mimeType: 'image/png' })}
-                                                        className="p-2 bg-white text-black rounded-full hover:bg-neutral-200"
-                                                        title="Use as Input for I2V"
-                                                    >
-                                                        <VideoIcon className="w-5 h-5" />
-                                                    </button>
-                                                )}
-                                                <button 
-                                                    onClick={() => downloadContent(state.resultUrl!, state.resultType || 'image', `server-${server.id}`)}
-                                                    className="p-2 bg-white text-black rounded-full hover:bg-neutral-200"
-                                                    title="Save"
-                                                >
-                                                    <DownloadIcon className="w-5 h-5" />
-                                                </button>
-                                            </div>
-                                        </>
-                                    ) : state.error ? (
-                                        <div className="text-center p-4">
-                                            <AlertTriangleIcon className="w-8 h-8 text-red-500 mx-auto mb-2" />
-                                            <p className="text-xs text-red-600 break-words line-clamp-3">{state.error}</p>
-                                        </div>
-                                    ) : (
-                                        <div className="text-neutral-400 text-xs">Ready</div>
-                                    )}
-                                </div>
-                                
-                                <div className="flex items-center justify-between px-2 py-1.5 bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800">
-                                    <span className="text-[10px] font-mono text-neutral-500">
-                                        Time: {state.duration || '--'}
-                                    </span>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => runTestForServer(server, 'T2I')} className="text-[10px] font-semibold text-blue-600 hover:underline">T2I</button>
-                                        <button onClick={() => runTestForServer(server, 'I2I')} disabled={!hasRefImages} className="text-[10px] font-semibold text-purple-600 hover:underline disabled:opacity-50">I2I</button>
-                                    </div>
-                                </div>
-
-                                <div className="h-24 bg-black text-green-400 p-2 font-mono text-[10px] overflow-y-auto">
-                                    {state.logs.length === 0 ? <span className="opacity-50">Waiting for logs...</span> : state.logs.map((log, i) => (
-                                        <div key={i}>{log}</div>
-                                    ))}
-                                </div>
-                                <div className="flex border-t border-neutral-200 dark:border-neutral-800 divide-x divide-neutral-200 dark:divide-neutral-800">
-                                    <button onClick={() => handleResetServer(server.id)} className="flex-1 py-2 text-[10px] font-bold text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">Reset</button>
-                                    <button onClick={() => handleCreateNewServer(server.id)} className="flex-1 py-2 text-[10px] font-bold text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">Create New</button>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
+            <div className="flex-1 overflow-y-auto p-1 min-h-0">
+                {renderResultsArea()}
             </div>
         </div>
     );

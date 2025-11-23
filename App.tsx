@@ -641,6 +641,7 @@ const App: React.FC = () => {
             alert('Server changed successfully! The application will now reload.');
             window.location.reload();
         } else {
+            // This 'else' path for login is no longer used, but kept for safety.
             await updateUserProxyServer(currentUser.id, serverUrl);
             setShowServerModal(false);
             proceedWithPostLoginFlow(currentUser);
@@ -667,7 +668,6 @@ const App: React.FC = () => {
     handleUserUpdate(user);
     logActivity('login');
     sessionStorage.setItem('session_started_at', new Date().toISOString());
-    setServerModalPurpose('login');
     
     if (user.role === 'admin') {
         console.log("[Session] Admin user detected. Assigning to dedicated admin server.");
@@ -679,16 +679,23 @@ const App: React.FC = () => {
         console.log("[Session] Local Development: Skipping server selection.");
         proceedWithPostLoginFlow(user);
     } else {
-        console.log("[Session] Waiting for user to select server...");
+        console.log("[Session] Auto-selecting a random server for user...");
         try {
-            const [serverCounts, serversToShow] = await Promise.all([
-                getServerUsageCounts(),
-                getAvailableServersForUser(user),
-            ]);
-            setServerOptions({ servers: serversToShow, usage: serverCounts });
-            setShowServerModal(true);
+            const serversToShow = await getAvailableServersForUser(user);
+            if (serversToShow.length === 0) {
+                throw new Error("No available servers found for this user account.");
+            }
+            
+            const randomServer = serversToShow[Math.floor(Math.random() * serversToShow.length)];
+            
+            sessionStorage.setItem('selectedProxyServer', randomServer);
+            await updateUserProxyServer(user.id, randomServer);
+            const serverName = randomServer.replace('https://', '').replace('.monoklix.com', '');
+            console.log(`[Session] Automatically connected user to random server: ${serverName.toUpperCase()}`);
+            proceedWithPostLoginFlow(user);
+
         } catch (error) {
-            console.error('[Session] Error during server selection setup. Using a random fallback server.', error);
+            console.error('[Session] Error during random server selection. Using a hardcoded fallback server.', error);
             let fallbackServers = ['https://s1.monoklix.com', 'https://s2.monoklix.com', 'https://s3.monoklix.com', 'https://s4.monoklix.com', 'https://s5.monoklix.com'];
             if (user.batch_02 === 'batch_02') {
                 fallbackServers = ['https://s6.monoklix.com', 'https://s7.monoklix.com', 'https://s8.monoklix.com', 'https://s9.monoklix.com'];
@@ -697,6 +704,8 @@ const App: React.FC = () => {
 
             sessionStorage.setItem('selectedProxyServer', fallbackServer);
             await updateUserProxyServer(user.id, fallbackServer);
+            const serverName = fallbackServer.replace('https://', '').replace('.monoklix.com', '');
+            console.log(`[Session] Automatically connected user to fallback server: ${serverName.toUpperCase()}`);
             proceedWithPostLoginFlow(user);
         }
     }
@@ -761,6 +770,8 @@ const App: React.FC = () => {
                 assignTokenProcess={assignTokenProcess}
                 onUserUpdate={handleUserUpdate}
                 onOpenChangeServerModal={handleOpenChangeServerModal}
+// @FIX: Add missing 'language' prop to ApiKeyStatus component.
+                language={language}
               />
           </div>
         </header>

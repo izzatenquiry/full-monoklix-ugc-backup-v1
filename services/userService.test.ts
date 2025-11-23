@@ -49,7 +49,7 @@ describe('userService with Supabase', () => {
         subscription_expiry: null,
         webhook_url: null,
       };
-      // FIX: Replace mockResolvedValueOnce with mockImplementation to avoid type inference issues with 'never'.
+      // @FIX: Replace mockResolvedValueOnce with mockImplementation to avoid type inference issues with 'never'.
       (mockSingle as jest.Mock).mockImplementation(() => Promise.resolve({ data: mockProfile, error: null }));
 
       const result = await loginUser('test@example.com');
@@ -63,7 +63,7 @@ describe('userService with Supabase', () => {
     });
 
     it('should fail to log in if user is not found', async () => {
-      // FIX: Replace mockResolvedValueOnce with mockImplementation to avoid type inference issues with 'never'.
+      // @FIX: Replace mockResolvedValueOnce with mockImplementation to avoid type inference issues with 'never'.
       (mockSingle as jest.Mock).mockImplementation(() => Promise.resolve({
         data: null,
         error: { message: 'user not found' },

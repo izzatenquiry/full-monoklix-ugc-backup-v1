@@ -42,8 +42,8 @@ interface UgcGeneratorViewProps {
 }
 
 const PRESET_PROMPTS = {
-    'English': "A cinematic shot of a futuristic city with flying cars at sunset, cyberpunk aesthetic, highly detailed, 8k resolution.",
-    'Bahasa Malaysia': "Paparan sinematik bandar futuristik dengan kereta terbang pada waktu matahari terbenam, estetik cyberpunk, sangat terperinci, resolusi 8k."
+    'English': "Enter your prompt here.",
+    'Bahasa Malaysia': "Masukkan prompt anda disini."
 };
 
 const aspectRatioMap: { [key: string]: string } = {
@@ -287,6 +287,16 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
         }
     }, [currentUser.personalAuthToken]);
 
+    const handleScroll = (direction: 'left' | 'right') => {
+        if (scrollContainerRef.current) {
+            const { clientWidth } = scrollContainerRef.current;
+            scrollContainerRef.current.scrollBy({
+                left: direction === 'left' ? -clientWidth : clientWidth,
+                behavior: 'smooth'
+            });
+        }
+    };
+
     const updateServerState = (serverId: string, updates: Partial<ServerState>) => {
         setServerStates(prev => ({
             ...prev,
@@ -492,16 +502,6 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
     };
 
     const hasRefImages = referenceImages.some(img => img !== null);
-
-    const handleScroll = (direction: 'left' | 'right') => {
-        if (scrollContainerRef.current) {
-            const scrollAmount = scrollContainerRef.current.offsetWidth * 0.8;
-            scrollContainerRef.current.scrollBy({
-                left: direction === 'left' ? -scrollAmount : scrollAmount,
-                behavior: 'smooth'
-            });
-        }
-    };
     
     const renderResultsArea = () => {
         if (viewState === 'idle') {
@@ -562,12 +562,12 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
                                         </button>
                                     </>
                                 )}
-                                <div ref={scrollContainerRef} className="flex items-center gap-4 overflow-x-auto p-4 custom-scrollbar">
+                                <div ref={scrollContainerRef} className="flex items-center gap-4 overflow-x-auto p-4 custom-scrollbar snap-x snap-mandatory">
                                     {successfulServers.map(server => {
                                         const state = serverStates[server.id];
                                         const stats = serverStats[server.id];
                                         return (
-                                            <div key={server.id} className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden flex flex-col h-[85vh] w-72 flex-shrink-0">
+                                            <div key={server.id} className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden flex flex-col h-[85vh] w-72 flex-shrink-0 snap-center">
                                                 <div className="p-3 border-b border-neutral-200 dark:border-neutral-800 flex justify-between items-center bg-neutral-50 dark:bg-neutral-800/50">
                                                     <div>
                                                         <h3 className="font-bold text-sm">{server.name}</h3>
@@ -637,7 +637,7 @@ const UgcGeneratorView: React.FC<UgcGeneratorViewProps> = ({ currentUser, langua
                             <div><label className="text-sm font-bold">Target Server:</label><select value={targetServerId} onChange={(e) => setTargetServerId(e.target.value)} className="w-full mt-1 p-2 bg-white dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 rounded-md focus:ring-2 focus:ring-primary-500 outline-none text-sm"><option value="all">All Servers (1-10) - Staggered Test</option>{SERVERS.map(s => (<option key={s.id} value={s.id}>{s.name} Only</option>))}</select></div>
                             <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800"><TokenHealthTester currentUser={currentUser} onUserUpdate={onUserUpdate} tokenPool={tokenPool} selectedToken={selectedToken} setSelectedToken={setSelectedToken} /></div>
                         </div>
-                        <div className="mt-auto space-y-2"><div className="flex gap-4"><button onClick={() => handleRunTests('T2I')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2"><ImageIcon className="w-5 h-5" /> Create T2I</button><button onClick={() => handleRunTests('I2I')} disabled={!hasRefImages} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><RefreshCwIcon className="w-5 h-5" /> Create I2I</button></div></div>
+                        <div className="mt-auto space-y-2"><div className="flex gap-4"><button onClick={() => handleRunTests('T2I')} disabled={hasRefImages} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><ImageIcon className="w-5 h-5" /> Create T2I</button><button onClick={() => handleRunTests('I2I')} disabled={!hasRefImages} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><RefreshCwIcon className="w-5 h-5" /> Create I2I</button></div></div>
                     </div>
                 </div>
             </div>
